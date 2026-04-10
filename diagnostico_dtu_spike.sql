@@ -281,29 +281,37 @@ ORDER BY (ios.range_scan_count + ios.singleton_lookup_count + ios.leaf_insert_co
 -- ============================================================================
 -- 9. TEMPDB: Uso de tempdb por sesion (posibles spills)
 -- ============================================================================
+-- Usa dm_db_session_space_usage que ACUMULA datos de toda la sesion,
+-- incluso despues de que las tareas individuales terminen.
+-- Esto devuelve datos aunque no haya tareas activas en este instante.
 PRINT ''
 PRINT '=== [9] USO DE TEMPDB POR SESION ==='
 PRINT ''
 
 SELECT
     GETUTCDATE()                                    AS snapshot_utc,
-    tsu.session_id,
+    ssu.session_id,
     s.login_name,
     s.host_name,
     c.client_net_address                            AS ip_origen,
     s.program_name,
-    tsu.user_objects_alloc_page_count               AS user_objects_alloc_pages,
-    tsu.user_objects_dealloc_page_count             AS user_objects_dealloc_pages,
-    tsu.internal_objects_alloc_page_count            AS internal_objects_alloc_pages,
-    tsu.internal_objects_dealloc_page_count          AS internal_objects_dealloc_pages,
-    (tsu.user_objects_alloc_page_count + tsu.internal_objects_alloc_page_count) * 8 / 1024
-                                                    AS total_alloc_mb
-FROM sys.dm_db_task_space_usage tsu
-INNER JOIN sys.dm_exec_sessions s ON tsu.session_id = s.session_id
-LEFT JOIN sys.dm_exec_connections c ON tsu.session_id = c.session_id
+    ssu.user_objects_alloc_page_count               AS user_objects_alloc_pages,
+    ssu.user_objects_dealloc_page_count             AS user_objects_dealloc_pages,
+    (ssu.user_objects_alloc_page_count - ssu.user_objects_dealloc_page_count) AS user_objects_net_pages,
+    ssu.internal_objects_alloc_page_count            AS internal_objects_alloc_pages,
+    ssu.internal_objects_dealloc_page_count          AS internal_objects_dealloc_pages,
+    (ssu.internal_objects_alloc_page_count - ssu.internal_objects_dealloc_page_count) AS internal_objects_net_pages,
+    (ssu.user_objects_alloc_page_count + ssu.internal_objects_alloc_page_count) * 8 / 1024
+                                                    AS total_alloc_mb,
+    (ssu.user_objects_alloc_page_count - ssu.user_objects_dealloc_page_count
+     + ssu.internal_objects_alloc_page_count - ssu.internal_objects_dealloc_page_count) * 8 / 1024
+                                                    AS net_current_usage_mb
+FROM sys.dm_db_session_space_usage ssu
+INNER JOIN sys.dm_exec_sessions s ON ssu.session_id = s.session_id
+LEFT JOIN sys.dm_exec_connections c ON ssu.session_id = c.session_id
 WHERE s.is_user_process = 1
-  AND (tsu.user_objects_alloc_page_count + tsu.internal_objects_alloc_page_count) > 0
-ORDER BY (tsu.user_objects_alloc_page_count + tsu.internal_objects_alloc_page_count) DESC;
+  AND (ssu.user_objects_alloc_page_count + ssu.internal_objects_alloc_page_count) > 0
+ORDER BY (ssu.user_objects_alloc_page_count + ssu.internal_objects_alloc_page_count) DESC;
 
 -- ============================================================================
 -- 10. QUERIES COSTOSAS RECIENTES (completadas en los ultimos 15 min)
