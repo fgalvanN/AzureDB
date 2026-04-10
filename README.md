@@ -5,38 +5,41 @@ Todos los dias a las ~7:00 AM UTC los DTU se disparan al 100% durante ~10 minuto
 
 ## Scripts
 
-### `diagnostico_dtu_spike.sql`
-Script completo con 10 secciones de diagnostico. Ejecutar al menos **una vez** durante el spike.
+### Flujo recomendado (con persistencia)
 
-**Captura:**
-1. Consumo actual de DTU/CPU/IO/Log
-2. Sesiones activas (login, IP origen, programa, host)
-3. Queries en ejecucion con texto SQL completo + plan de ejecucion XML
-4. Top queries por CPU del Query Store (ultima hora)
-5. Wait stats (donde espera el servidor)
-6. Cadena de bloqueos activos
-7. Indices faltantes sugeridos
-8. Estadisticas de IO por tabla
-9. Uso de tempdb por sesion (detectar spills)
-10. Queries costosas completadas recientemente (ultimos 15 min)
+| Orden | Script | Cuando | Que hace |
+|-------|--------|--------|----------|
+| 1 | `01_crear_tablas_diagnostico.sql` | Una sola vez, antes del spike | Crea las tablas donde se guardan los datos |
+| 2 | `02_captura_persistente.sql` | Cada 1-2 min durante el spike | Inserta snapshots en las tablas |
+| 3 | `03_analisis_resultados.sql` | Despues del spike | Resume y agrega los datos para encontrar culpables |
+| 4 | `04_cleanup.sql` | Cuando ya no se necesiten | Elimina las tablas de diagnostico |
 
-### `captura_rapida.sql`
-Version compacta para ejecutar cada 1-2 minutos. Captura recursos + queries activas + IP/usuario + plan.
+### Scripts originales (solo visualizacion en pantalla)
+
+| Script | Uso |
+|--------|-----|
+| `diagnostico_dtu_spike.sql` | Diagnostico completo de 10 secciones, resultados en pantalla |
+| `captura_rapida.sql` | Version compacta para ejecucion rapida repetida |
 
 ## Como usar
 
 1. Conectar a la DB afectada con SSMS o Azure Data Studio
-2. A las ~6:55 AM ejecutar `diagnostico_dtu_spike.sql` como baseline
-3. A las ~7:00 AM cuando suban los DTU, ejecutar `captura_rapida.sql` cada 1-2 min
-4. A las ~7:05 AM ejecutar `diagnostico_dtu_spike.sql` completo nuevamente
-5. Guardar todos los resultados para analisis
+2. Ejecutar `01_crear_tablas_diagnostico.sql` (una sola vez)
+3. A las ~6:55 AM ejecutar `02_captura_persistente.sql` como baseline
+4. A las ~7:00 AM cuando suban los DTU, ejecutar `02_captura_persistente.sql` cada 1-2 min
+5. Repetir paso 4 durante los ~10 min del spike
+6. Ejecutar `03_analisis_resultados.sql` para ver el resumen
+7. Compartir resultados de secciones E, F y H para optimizacion
 
-## Que buscar en los resultados
+## Que buscar en los resultados del analisis
 
-- **Seccion 3**: La query con mas `cpu_time` y `logical_reads` es la sospechosa principal
-- **`ip_origen`**: Identifica desde donde se conecta
-- **`login_name`**: Quien ejecuta la query
-- **`program_name`**: Que aplicacion/servicio la lanza
-- **`plan_xml`**: Click en el XML para ver el plan grafico en SSMS
-- **Seccion 6**: Si hay bloqueos, el problema puede ser una transaccion abierta que bloquea a las demas
-- **Seccion 7**: Si hay missing indexes con alto `improvement_measure`, pueden estar causando scans costosos
+- **Seccion E**: Top queries por CPU total del Query Store (la fuente mas confiable)
+- **Seccion H**: Texto completo + plan de ejecucion XML de las top 5 queries
+- **Seccion F**: Que tipo de waits crecieron durante el spike (CPU, IO, locks)
+- **Seccion B**: Usuarios, IPs y programas que estuvieron conectados
+- **Seccion D**: Queries agrupadas por patron (misma query ejecutada muchas veces)
+- **Seccion G**: Bloqueos detectados
+
+## Limpieza
+
+Ejecutar `04_cleanup.sql` para eliminar las tablas de diagnostico cuando ya no se necesiten.
